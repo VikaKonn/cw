@@ -6,16 +6,22 @@ import plotly.graph_objects as go
 from datetime import datetime
 import seaborn as sns
 import matplotlib.pyplot as plt
+import joblib
+from sklearn.preprocessing import StandardScaler
+
+# Загрузка модели
+@st.cache_data
+def load_model():
+    return joblib.load("trained_model.joblib")
 
 # Настройка страницы
 st.set_page_config(
     page_title="Анализ финансовой отчетности",
-    page_icon="📊",
     layout="wide"
 )
 
 # Заголовок
-st.title("📊 Система анализа финансовой отчетности предприятия")
+st.title("Система анализа финансовой отчетности предприятия")
 
 # Загрузка данных
 @st.cache_data
@@ -118,89 +124,50 @@ with tab3:
 
 with tab4:
     st.header("Прогнозирование")
-    
-    # Выбор модели
-    model_type = st.selectbox(
-        "Выберите модель для прогнозирования",
-        ["Линейная регрессия", "Случайный лес"]
+
+    # Выбор метрики
+    target = st.radio("Что вы хотите спрогнозировать?", ["Чистая прибыль", "Выручка"])
+    model_path = "model_profit.joblib" if target == "Чистая прибыль" else "model_revenue.joblib"
+    model = joblib.load(model_path)
+
+    # Ввод пользователем количества лет
+    years_to_predict = st.slider("Сколько лет вперёд спрогнозировать?", 1, 10, 3)
+
+    # Загрузка данных и определение последнего года
+    df = pd.read_csv("company_financial_data.csv")
+    last_year = df["Год"].max()
+    future_years = np.array(range(last_year + 1, last_year + years_to_predict + 1)).reshape(-1, 1)
+
+    # Прогнозирование
+    forecast = model.predict(future_years)
+
+    # Отображение
+    forecast_df = pd.DataFrame({
+        "Год": future_years.flatten(),
+        "Прогноз": forecast.astype(int)
+    })
+    forecast_df.reset_index(drop=True, inplace=True)
+
+    st.subheader(f"Прогноз на {target.lower()} на {years_to_predict} лет:")
+    st.dataframe(forecast_df.style.format({"Год": "{:d}"}), hide_index=True)
+
+    # Для графика — преобразуем год в строку, чтобы не было разделителя тысяч
+    forecast_df_plot = forecast_df.copy()
+    forecast_df_plot["Год"] = forecast_df_plot["Год"].astype(str)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=forecast_df["Год"].astype(str),  # делаем года строкой для дискретной оси
+        y=forecast_df["Прогноз"],
+        mode='lines+markers'
+    ))
+    fig.update_layout(
+        xaxis_title="Год",
+        yaxis_title="Прогноз",
+        xaxis_tickangle=0,
+        xaxis_type="category"  # вот это важно!
     )
-    
-    # Выбор показателя для прогноза
-    target_metric = st.selectbox(
-        "Выберите показатель для прогноза",
-        selected_metrics
-    )
-    
-    # Настройка параметров
-    forecast_years = st.slider(
-        "Количество лет для прогноза",
-        min_value=1,
-        max_value=3,
-        value=3
-    )
-    
-    # Кнопка для запуска прогноза
-    if st.button("Сделать прогноз"):
-        st.info("Прогнозирование...")
-        
-        # Получаем последний год из данных
-        last_year = filtered_data['Год'].max()
-        
-        # Создаем список лет для прогноза
-        forecast_years_list = [last_year + i + 1 for i in range(forecast_years)]
-        
-        # Рассчитываем средний годовой прирост на основе исторических данных
-        yearly_means = filtered_data.groupby('Год')[target_metric].mean()
-        yearly_growth = yearly_means.pct_change().mean()
-        
-        # Если рост отрицательный или слишком большой, используем более консервативную оценку
-        if yearly_growth < 0 or yearly_growth > 0.15:
-            yearly_growth = 0.05  # 5% годовой рост
-        
-        # Генерируем прогнозные значения на основе последнего известного значения
-        last_value = yearly_means.iloc[-1]
-        forecast_values = []
-        for i in range(forecast_years):
-            next_value = last_value * (1 + yearly_growth)
-            forecast_values.append(next_value)
-            last_value = next_value
-        
-        # Временный график для демонстрации
-        fig = go.Figure()
-        
-        # Исторические данные
-        historical_years = filtered_data['Год'].unique()
-        historical_values = filtered_data.groupby('Год')[target_metric].mean()
-        
-        fig.add_trace(go.Scatter(
-            x=historical_years,
-            y=historical_values,
-            name='Исторические данные',
-            mode='lines+markers'
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=forecast_years_list,
-            y=forecast_values,
-            name='Прогноз',
-            line=dict(dash='dash'),
-            mode='lines+markers'
-        ))
-        
-        # Настройка внешнего вида графика
-        fig.update_layout(
-            title=f"Прогноз {target_metric} на {forecast_years} лет",
-            xaxis_title="Год",
-            yaxis_title=target_metric,
-            showlegend=True,
-            xaxis=dict(
-                dtick=1,
-                tickmode='linear'
-            )
-        )
-        
-        st.success("Прогноз готов!")
-        st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
 # Футер
 st.markdown("---")
